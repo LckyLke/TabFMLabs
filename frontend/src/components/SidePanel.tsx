@@ -308,12 +308,9 @@ export function SidePanel({
   const busy = busyStage !== null;
   const selectedModel = models.find((m) => m.id === modelId);
   const canCompare = models.filter((m) => m.id !== "baseline").length >= 2;
-  // With results the rail can be taller than the viewport: let it flow with
-  // the page instead of pinning it and scrolling inside itself.
-  const hasLongContent = result !== null || compare !== null;
 
   return (
-    <aside className={`rail ${hasLongContent ? "rail-flow" : ""}`}>
+    <aside className="rail">
       <div className="rail-card">
         <h2 className="rail-title">Before you predict</h2>
         <ol className="steps">
@@ -367,7 +364,12 @@ export function SidePanel({
 
         <label className="model-select">
           <span className="model-select-label">Model</span>
-          <select value={modelId} onChange={(e) => onModelChange(e.target.value)} disabled={busy}>
+          <select
+            value={models.length === 0 ? "" : modelId}
+            onChange={(e) => onModelChange(e.target.value)}
+            disabled={busy || models.length === 0}
+          >
+            {models.length === 0 && <option value="">Connecting to backend…</option>}
             {models.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.label}

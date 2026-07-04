@@ -6,16 +6,26 @@ interface Props {
 }
 
 export function TopBar({ filename, nRows, modelName, onReset }: Props) {
+  const brandMark = (
+    <svg className="brand-mark" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <rect x="1.5" y="1.5" width="17" height="17" rx="4" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M1.5 7.5h17M7.5 7.5v11" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="13.5" cy="13.5" r="2.2" fill="currentColor" />
+    </svg>
+  );
   return (
     <header className="topbar">
-      <span className="brand">
-        <svg className="brand-mark" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <rect x="1.5" y="1.5" width="17" height="17" rx="4" stroke="currentColor" strokeWidth="1.6" />
-          <path d="M1.5 7.5h17M7.5 7.5v11" stroke="currentColor" strokeWidth="1.6" />
-          <circle cx="13.5" cy="13.5" r="2.2" fill="currentColor" />
-        </svg>
-        TabFM Studio
-      </span>
+      {filename ? (
+        <button className="brand brand-home" onClick={onReset} title="Back to your projects">
+          {brandMark}
+          TabFM Studio
+        </button>
+      ) : (
+        <span className="brand">
+          {brandMark}
+          TabFM Studio
+        </span>
+      )}
       {filename && (
         <span className="file-chip" title={filename}>
           <span className="file-chip-name">{filename}</span>

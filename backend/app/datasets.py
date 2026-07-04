@@ -161,6 +161,11 @@ def _build_sheets(raws: dict[str, pd.DataFrame]) -> dict[str, Sheet]:
 def store_dataset(
     filename: str, raws: dict[str, pd.DataFrame], content: bytes
 ) -> tuple[str, Dataset]:
+    # Re-uploading the exact same file reopens the existing project (with its
+    # saved marking and results) instead of creating a duplicate.
+    existing = store.find_project_by_content(filename, content)
+    if existing is not None:
+        return existing, get_dataset(existing)
     sheets = _build_sheets(raws)
     # Prefer the first sheet that actually has a table (≥ 2 raw rows).
     active = next(

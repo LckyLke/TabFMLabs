@@ -4,6 +4,7 @@ import io
 import logging
 import threading
 import uuid
+from contextlib import asynccontextmanager
 
 import numpy as np
 import pandas as pd
@@ -60,7 +61,15 @@ HOLDOUT_FRACTION = 0.2
 MAX_RESULT_ROWS_INLINE = 500
 MAX_HOLDOUT_SAMPLES = 200
 
-app = FastAPI(title="TabFM Studio API")
+@asynccontextmanager
+async def _lifespan(_: FastAPI):
+    removed = store.dedupe_projects()
+    if removed:
+        logger.info("Removed %d duplicate project(s)", removed)
+    yield
+
+
+app = FastAPI(title="TabFM Studio API", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -179,7 +188,9 @@ def list_projects() -> list[ProjectInfo]:
             dataset_id=p["dataset_id"],
             filename=p["filename"],
             created_at=p["created_at"],
-            n_sheets=0,
+            last_used=p["last_used"],
+            n_results=p["n_results"],
+            target_column=p["target_column"],
             has_result=p["n_results"] > 0,
         )
         for p in store.list_projects()

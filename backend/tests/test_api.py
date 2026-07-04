@@ -529,6 +529,49 @@ def test_projects_and_rehydration(iris_like):
     assert client.get(f"/api/datasets/{ds}").status_code == 404
 
 
+def test_reupload_reuses_project(iris_like):
+    """Uploading the exact same file twice reopens the project, no duplicate."""
+    first = upload(iris_like, name="reused.csv")
+    client.put(
+        f"/api/datasets/{first['dataset_id']}/roles",
+        json={"roles": ["feature", "feature", "target"]},
+    )
+
+    second = upload(iris_like, name="reused.csv")
+    assert second["dataset_id"] == first["dataset_id"]
+    assert second["roles"] == ["feature", "feature", "target"]  # marking survives
+
+    projects = client.get("/api/projects").json()
+    assert sum(p["filename"] == "reused.csv" for p in projects) == 1
+
+    # same name but different content is a genuinely new project
+    changed = iris_like.copy()
+    changed.loc[0, "length"] = 99.9
+    third = upload(changed, name="reused.csv")
+    assert third["dataset_id"] != first["dataset_id"]
+
+    client.delete(f"/api/projects/{first['dataset_id']}")
+    client.delete(f"/api/projects/{third['dataset_id']}")
+
+
+def test_dedupe_projects_startup_cleanup(iris_like):
+    """Pre-existing duplicate rows collapse to one, preferring rows with results."""
+    from app import store
+
+    upload(iris_like, name="dupes.csv")
+    content = make_csv(iris_like)
+    store.save_project("dupe-a", "dupes.csv", content, "Sheet1")
+    store.save_project("dupe-b", "dupes.csv", content, "Sheet1")
+
+    removed = store.dedupe_projects()
+    assert removed == 2
+    projects = client.get("/api/projects").json()
+    ids = [p["dataset_id"] for p in projects if p["filename"] == "dupes.csv"]
+    assert len(ids) == 1
+
+    client.delete(f"/api/projects/{ids[0]}")
+
+
 def test_grid_pagination():
     df = pd.DataFrame({"a": range(1200), "b": [None if i > 1000 else i for i in range(1200)]})
     data = upload(df)

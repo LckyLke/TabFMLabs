@@ -28,6 +28,22 @@
   color: var(--series-1);
 }
 
+.brand-home {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 650;
+  padding: 0.2rem 0.45rem;
+  margin: -0.2rem -0.45rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.brand-home:hover {
+  background: var(--series-1-soft);
+}
+
 .file-chip {
   display: inline-flex;
   align-items: center;
@@ -217,9 +233,6 @@
   .studio {
     grid-template-columns: minmax(0, 1fr);
   }
-  .rail {
-    position: static;
-  }
 }
 
 /* sheet tabs */
@@ -293,12 +306,22 @@
   overflow-y: auto;
 }
 
-/* With results the rail can outgrow the viewport: flow with the page instead
-   of pinning and double-scrolling. */
-.rail.rail-flow {
-  position: static;
-  max-height: none;
-  overflow: visible;
+/* The rail always stays pinned and scrolls internally — if it flowed with the
+   page, page-scrolling to reach results would push the data grid (and its
+   sticky headers) off-screen behind the topbar. */
+.rail {
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline-strong) transparent;
+}
+
+/* Single-column layout: the rail sits below the grid, so let it flow with
+   the page instead of pinning. */
+@media (max-width: 960px) {
+  .rail {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
 }
 
 .rail-card {
@@ -525,9 +548,11 @@
   border-bottom: 1px solid var(--hairline-strong);
 }
 
+/* Sticky cells need opaque hover backgrounds — scrolled content passes
+   underneath and would bleed through a translucent tint. */
 .grid-col-header:hover,
 .grid-col-header.is-open {
-  background: var(--series-1-soft);
+  background: linear-gradient(var(--series-1-soft), var(--series-1-soft)) var(--surface-raised);
 }
 
 .col-header-top {
@@ -623,7 +648,7 @@
 }
 
 .gutter:hover {
-  background: var(--series-1-soft);
+  background: linear-gradient(var(--series-1-soft), var(--series-1-soft)) var(--surface-raised);
   color: var(--ink);
 }
 
@@ -740,6 +765,12 @@
   color: var(--ink-muted);
   background: var(--surface-raised);
   border-top: 1px solid var(--hairline);
+}
+
+/* Blank space below the last row (like Excel) so bottom rows can scroll up
+   clear of the viewport edge — display only, never part of the data. */
+.grid-tail {
+  height: clamp(6rem, 22vh, 14rem);
 }
 
 /* ---------- Popover ---------- */
@@ -1220,72 +1251,164 @@
   text-decoration: none;
 }
 
-/* ---------- Recent projects ---------- */
-.recent {
-  margin-top: 2.25rem;
-  text-align: left;
+/* ---------- Project dashboard (returning users) ---------- */
+.dashboard {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
 }
 
-.recent-title {
-  font-size: 0.8rem;
-  font-weight: 650;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--ink-muted);
-  margin: 0 0 0.5rem;
-}
-
-.recent-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.recent-item {
+.dropstrip {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-}
-
-.recent-open {
-  flex: 1;
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 0.75rem;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 1rem 1.25rem;
   background: var(--surface);
-  border: 1px solid var(--hairline-strong);
-  border-radius: 9px;
-  padding: 0.5rem 0.8rem;
-  font: inherit;
+  border: 1.5px dashed var(--hairline-strong);
+  border-radius: 12px;
   cursor: pointer;
-  text-align: left;
-  min-width: 0;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
-.recent-open:hover {
+.dropstrip:hover,
+.dropstrip.dragging {
   border-color: var(--series-1);
   background: var(--series-1-tint);
 }
 
-.recent-name {
-  font-size: 0.86rem;
+.dropstrip-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--series-1);
+  flex: none;
+}
+
+.dropstrip-text {
+  font-size: 0.9rem;
+  color: var(--ink-2);
+}
+
+.dropstrip-text strong {
+  color: var(--ink);
+}
+
+.dashboard-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin: 2rem 0 0.9rem;
+}
+
+.dashboard-title {
+  font-size: 1.15rem;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.dashboard-actions {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.project-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 0.8rem;
+}
+
+.project-card {
+  position: relative;
+}
+
+.project-open {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 12px;
+  padding: 0.95rem 1rem;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.project-open:hover {
+  border-color: var(--series-1);
+  background: var(--series-1-tint);
+}
+
+.project-icon {
+  display: inline-flex;
+  margin-bottom: 0.4rem;
+}
+
+.project-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.project-icon.is-excel {
+  color: var(--ok-ink);
+}
+
+.project-icon.is-csv {
+  color: var(--series-1);
+}
+
+.project-name {
+  font-size: 0.88rem;
   font-weight: 600;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.recent-meta {
+.project-meta {
   font-size: 0.74rem;
   color: var(--ink-muted);
+}
+
+.project-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.recent-delete {
+.project-status.has-predictions {
+  color: var(--series-1);
+}
+
+.project-status svg {
+  width: 10px;
+  height: 10px;
+  flex: none;
+}
+
+.project-delete {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1296,15 +1419,21 @@
   background: transparent;
   color: var(--ink-muted);
   cursor: pointer;
-  flex: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
 }
 
-.recent-delete:hover {
+.project-card:hover .project-delete,
+.project-delete:focus-visible {
+  opacity: 1;
+}
+
+.project-delete:hover {
   background: var(--error-bg);
   color: var(--error-ink);
 }
 
-.recent-delete svg {
+.project-delete svg {
   width: 10px;
   height: 10px;
 }

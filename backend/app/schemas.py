@@ -156,5 +156,7 @@ class ProjectInfo(BaseModel):
     dataset_id: str
     filename: str
     created_at: str
-    n_sheets: int
+    last_used: str
+    n_results: int
+    target_column: str | None
     has_result: bool

@@ -103,19 +103,75 @@ def update_marking(project_id: str, sheet_name: str, *, spec=None, roles=None, a
         _db().commit()
 
 
+def find_project_by_content(filename: str, content: bytes) -> str | None:
+    """Return the id of an existing project with this exact file, if any."""
+    with _lock:
+        rows = _db().execute(
+            "SELECT id, content FROM projects WHERE filename = ?", (filename,)
+        ).fetchall()
+    for project_id, blob in rows:
+        if blob == content:
+            return project_id
+    return None
+
+
+def dedupe_projects() -> int:
+    """Collapse projects with identical filename+content (one-time cleanup for
+    rows created before uploads reused existing projects). Keeps the copy with
+    the most results (newest on a tie); never deletes a row that has results."""
+    with _lock:
+        rows = _db().execute(
+            """SELECT p.id, p.filename, p.content, p.created_at,
+                      (SELECT COUNT(*) FROM results r WHERE r.project_id = p.id)
+               FROM projects p"""
+        ).fetchall()
+        groups: dict[tuple, list] = {}
+        for pid, filename, content, created_at, n_results in rows:
+            groups.setdefault((filename, bytes(content)), []).append(
+                (pid, created_at, n_results)
+            )
+        removed = 0
+        for dupes in groups.values():
+            if len(dupes) < 2:
+                continue
+            keep = max(dupes, key=lambda d: (d[2], d[1]))[0]
+            for pid, _, n_results in dupes:
+                if pid != keep and n_results == 0:
+                    _db().execute("DELETE FROM projects WHERE id = ?", (pid,))
+                    removed += 1
+        if removed:
+            _db().commit()
+    return removed
+
+
 def list_projects() -> list[dict]:
     with _lock:
         rows = (
             _db()
             .execute(
                 """SELECT p.id, p.filename, p.created_at,
-                          (SELECT COUNT(*) FROM results r WHERE r.project_id = p.id)
-                   FROM projects p ORDER BY p.created_at DESC LIMIT 50"""
+                          (SELECT COUNT(*) FROM results r WHERE r.project_id = p.id),
+                          (SELECT MAX(r.created_at) FROM results r WHERE r.project_id = p.id),
+                          (SELECT r.target_column FROM results r WHERE r.project_id = p.id
+                           ORDER BY r.created_at DESC LIMIT 1)
+                   FROM projects p
+                   ORDER BY COALESCE(
+                       (SELECT MAX(r.created_at) FROM results r WHERE r.project_id = p.id),
+                       p.created_at
+                   ) DESC
+                   LIMIT 50"""
             )
             .fetchall()
         )
     return [
-        {"dataset_id": r[0], "filename": r[1], "created_at": r[2], "n_results": r[3]}
+        {
+            "dataset_id": r[0],
+            "filename": r[1],
+            "created_at": r[2],
+            "n_results": r[3],
+            "last_used": r[4] or r[2],
+            "target_column": r[5],
+        }
         for r in rows
     ]
 

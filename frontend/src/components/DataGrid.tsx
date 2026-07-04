@@ -25,8 +25,10 @@ const WINDOW_THRESHOLD = 150; // small tables render fully (stable DOM for tests
 const OVERSCAN = 25;
 
 type Popover =
-  | { kind: "column"; index: number; x: number; y: number }
-  | { kind: "row"; index: number; x: number; y: number };
+  | { kind: "column"; index: number; x: number; y: number; up: boolean }
+  | { kind: "row"; index: number; x: number; y: number; up: boolean };
+
+const POPOVER_EST_H = 320; // px; open the menu upward when a cell is closer than this to the viewport bottom
 
 const KIND_LABELS: Record<ColumnInfo["kind"], string> = {
   numeric: "Number",
@@ -118,13 +120,16 @@ export function DataGrid({
   const targetIndex = roles.indexOf("target");
   const excluded = new Set(spec.excluded_rows);
 
-  function openPopover(e: React.MouseEvent, p: Omit<Popover, "x" | "y">) {
+  function openPopover(e: React.MouseEvent, p: Omit<Popover, "x" | "y" | "up">) {
     const wrap = wrapRef.current!.getBoundingClientRect();
     const cell = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const up = cell.bottom + POPOVER_EST_H > window.innerHeight && cell.top - POPOVER_EST_H >= 0;
     setPopover({
       ...p,
       x: Math.min(cell.left - wrap.left, wrap.width - 280),
-      y: cell.bottom - wrap.top + 4,
+      // top offset normally; distance from the wrap's bottom edge when flipped up
+      y: up ? wrap.bottom - cell.top + 4 : cell.bottom - wrap.top + 4,
+      up,
     } as Popover);
   }
 
@@ -263,10 +268,15 @@ export function DataGrid({
             load more; marking and prediction always apply to the whole file.
           </div>
         )}
+        <div className="grid-tail" aria-hidden="true" />
       </div>
 
       {popover?.kind === "column" && (
-        <div className="popover" style={{ left: popover.x, top: popover.y }} role="menu">
+        <div
+          className="popover"
+          style={popover.up ? { left: popover.x, bottom: popover.y } : { left: popover.x, top: popover.y }}
+          role="menu"
+        >
           {(() => {
             const col = columns[popover.index];
             return (
@@ -306,7 +316,11 @@ export function DataGrid({
       )}
 
       {popover?.kind === "row" && (
-        <div className="popover" style={{ left: popover.x, top: popover.y }} role="menu">
+        <div
+          className="popover"
+          style={popover.up ? { left: popover.x, bottom: popover.y } : { left: popover.x, top: popover.y }}
+          role="menu"
+        >
           <div className="popover-head">
             <span className="popover-title">Row {popover.index + 1}</span>
           </div>

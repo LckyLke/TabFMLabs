@@ -5,6 +5,7 @@ import {
   getGridPage,
   getPredictJob,
   listModels,
+  retryWhileStarting,
   saveRoles,
   setActiveSheet,
   setTableSpec,
@@ -60,13 +61,16 @@ export default function App() {
   const gridLoading = useRef(false);
 
   useEffect(() => {
-    listModels()
-      .then((list) => {
-        setModels(list);
-        const def = list.find((m) => m.is_default);
-        if (def) setModelId(def.id);
-      })
-      .catch(() => setModels([]));
+    let cancelled = false;
+    void retryWhileStarting(listModels, () => cancelled).then((list) => {
+      if (!list || cancelled) return;
+      setModels(list);
+      const def = list.find((m) => m.is_default);
+      if (def) setModelId(def.id);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   function onUploaded(ds: DatasetResponse) {

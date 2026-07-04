@@ -123,7 +123,9 @@ export interface ProjectInfo {
   dataset_id: string;
   filename: string;
   created_at: string;
-  n_sheets: number;
+  last_used: string;
+  n_results: number;
+  target_column: string | null;
   has_result: boolean;
 }
 
@@ -200,6 +202,24 @@ export async function saveRoles(datasetId: string, roles: ColumnRole[]): Promise
 
 export async function listModels(): Promise<ModelInfo[]> {
   return handleResponse(await fetch(`${API_BASE}/api/models`));
+}
+
+/** Retry a request with backoff until it succeeds or `cancelled()` — the
+ * backend can take a few seconds longer than the dev server to come up. */
+export async function retryWhileStarting<T>(
+  fetcher: () => Promise<T>,
+  cancelled: () => boolean,
+): Promise<T | null> {
+  let delay = 400;
+  while (!cancelled()) {
+    try {
+      return await fetcher();
+    } catch {
+      await new Promise((r) => setTimeout(r, delay));
+      delay = Math.min(delay * 1.8, 5000);
+    }
+  }
+  return null;
 }
 
 export async function listProjects(): Promise<ProjectInfo[]> {
