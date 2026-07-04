@@ -1,0 +1,14 @@
+ACME Corp — Regional Sales Report,,,,
+Exported 2026-07-01 by finance team,,,,
+,,,,
+region,sales_reps,marketing_spend,prior_quarter_revenue,revenue
+North,12,50000,410000,455000
+South,8,32000,260000,281000
+West,15,61000,530000,588000
+East,10,41000,335000,362000
+Central,6,22000,170000,181000
+Northeast,9,38000,300000,
+Southwest,14,58000,505000,
+TOTAL,74,302000,2510000,1867000
+,,,,
+Figures in EUR. Empty revenue = forecast pending.,,,,

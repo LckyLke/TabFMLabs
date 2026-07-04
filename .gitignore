@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Node / frontend build
+node_modules/
+dist/
+*.local
+*.log
+
+# Secrets & local config
+.env
+.env.*
+
+# Model weights — never commit checkpoints (6.6 GB each; they live in
+# ~/.cache/tabfm-studio, but guard against accidental copies into the repo)
+*.safetensors
+*.ckpt
+*.pt
+*.bin
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+data/
