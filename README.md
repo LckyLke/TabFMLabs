@@ -8,6 +8,9 @@ your machine.
 
 ## Quick start
 
+Requires **Python 3.11+** and **Node.js 20.19+** (for `npm`) on your PATH —
+`start.sh` checks both up front and tells you what's missing.
+
 ```bash
 ./start.sh
 ```
