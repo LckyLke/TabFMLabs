@@ -11,10 +11,16 @@ dependencies = [
     "openpyxl",
     "scikit-learn",
     "tabfm[pytorch]",
+    "safetensors",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest", "httpx"]
+
+# The runtime data/ directory must not be picked up as a package — with it
+# present, setuptools' flat-layout auto-discovery makes any reinstall fail.
+[tool.setuptools]
+packages = ["app"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

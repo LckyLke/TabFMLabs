@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 
 export interface TutorialSnapshot {
   activeSheet: string | null;
@@ -8,13 +9,14 @@ export interface TutorialSnapshot {
   rowsToPredict: number;
   busy: boolean;
   hasResult: boolean;
+  hasError: boolean;
 }
 
 interface Step {
   id: string;
   target: string | null; // CSS selector; null = centered modal
   title: string;
-  body: string;
+  body: ReactNode; // click targets are marked <strong>
   /** When set, the step is interactive: it advances once the predicate holds. */
   advanceWhen?: (s: TutorialSnapshot) => boolean;
 }
@@ -30,21 +32,36 @@ const STEPS: Step[] = [
     id: "sheets",
     target: ".sheet-tabs",
     title: "Files can have several sheets",
-    body: "This workbook has three. “Read me” is just notes — click the “Regional Sales” tab to open a real table.",
+    body: (
+      <>
+        This workbook has three. “Read me” is just notes — click the{" "}
+        <strong>“Regional Sales”</strong> tab to open a real table.
+      </>
+    ),
     advanceWhen: (s) => s.activeSheet === "Regional Sales",
   },
   {
     id: "header",
     target: ".grid-table tbody tr:nth-child(3) .gutter",
     title: "Tell it where your table starts",
-    body: "The title rows above confused the auto-detection — the real column names are in row 3. Click the row number 3 and choose “Use as header row”.",
+    body: (
+      <>
+        The title rows above confused the auto-detection — the real column names are in row 3.
+        Click the <strong>row number 3</strong> and choose <strong>“Use as header row”</strong>.
+      </>
+    ),
     advanceWhen: (s) => s.activeSheet === "Regional Sales" && s.headerRow === 2,
   },
   {
     id: "trim",
     target: ".grid-table tbody tr:nth-child(27) .gutter",
     title: "Trim what isn’t data",
-    body: "Row 28 is a TOTAL and row 29 a footnote — they'd poison the model. Click row number 27 and choose “Data ends here”.",
+    body: (
+      <>
+        Row 28 is a TOTAL and row 29 a footnote — they'd poison the model. Click{" "}
+        <strong>row number 27</strong> and choose <strong>“Data ends here”</strong>.
+      </>
+    ),
     advanceWhen: (s) => s.activeSheet === "Regional Sales" && s.endRow === 26,
   },
   {
@@ -57,14 +74,24 @@ const STEPS: Step[] = [
     id: "switch",
     target: ".sheet-tabs",
     title: "Now let’s predict something",
-    body: "Switch to the “Customer Churn” sheet — a subscription list where 8 accounts have an unknown churn status.",
+    body: (
+      <>
+        Switch to the <strong>“Customer Churn”</strong> sheet — a subscription list where 8
+        accounts have an unknown churn status.
+      </>
+    ),
     advanceWhen: (s) => s.activeSheet === "Customer Churn",
   },
   {
     id: "target",
     target: ".grid-table thead th:nth-of-type(7)",
     title: "Pick the column to predict",
-    body: "Click the “churned” column header and choose “Predict this column”.",
+    body: (
+      <>
+        Click the <strong>“churned”</strong> column header and choose{" "}
+        <strong>“Predict this column”</strong>.
+      </>
+    ),
     advanceWhen: (s) => s.activeSheet === "Customer Churn" && s.hasTarget,
   },
   {
@@ -77,7 +104,12 @@ const STEPS: Step[] = [
     id: "predict",
     target: ".rail-predict",
     title: "Run the model",
-    body: "Click Predict. TabFM reads the example rows as context and predicts the blanks in one pass — this takes a few seconds on your GPU.",
+    body: (
+      <>
+        Click <strong>Predict</strong>. TabFM reads the example rows as context and predicts the
+        blanks in one pass — this takes a few seconds on your GPU.
+      </>
+    ),
     advanceWhen: (s) => s.hasResult,
   },
   {
@@ -90,7 +122,12 @@ const STEPS: Step[] = [
     id: "done",
     target: null,
     title: "That’s the whole workflow 🎉",
-    body: "Upload → tidy if needed → pick the target → Predict → download the completed table. Close the file (✕ in the top bar) and try one of your own spreadsheets.",
+    body: (
+      <>
+        Upload → tidy if needed → pick the target → Predict → download the completed table. Close
+        the file (<strong>✕</strong> in the top bar) and try one of your own spreadsheets.
+      </>
+    ),
   },
 ];
 
@@ -147,6 +184,7 @@ export function Tutorial({ snapshot, stepIndex, onStepChange, onClose }: Props) 
 
   const interactive = Boolean(step.advanceWhen);
   const waiting = interactive && step.id === "predict" && snapshot.busy;
+  const goNext = () => (stepIndex + 1 < STEPS.length ? onStepChange(stepIndex + 1) : onClose());
 
   let cardStyle: React.CSSProperties;
   if (step.target && rect) {
@@ -201,22 +239,24 @@ export function Tutorial({ snapshot, stepIndex, onStepChange, onClose }: Props) 
             Exit tour
           </button>
           {interactive ? (
-            <span className="tour-wait">
-              {waiting ? (
-                <>
-                  <span className="spinner spinner-blue" aria-hidden="true" /> predicting…
-                </>
-              ) : (
-                "Your turn — click it!"
-              )}
+            <span className="tour-wait-group">
+              <span className={`tour-wait ${!waiting && snapshot.hasError ? "tour-wait-error" : ""}`}>
+                {waiting ? (
+                  <>
+                    <span className="spinner spinner-blue" aria-hidden="true" /> predicting…
+                  </>
+                ) : snapshot.hasError ? (
+                  "That didn’t work — see the error in the panel."
+                ) : (
+                  "Your turn — click it!"
+                )}
+              </span>
+              <button className="btn-ghost tour-skip" onClick={goNext}>
+                Skip
+              </button>
             </span>
           ) : (
-            <button
-              className="btn-primary tour-next"
-              onClick={() =>
-                stepIndex + 1 < STEPS.length ? onStepChange(stepIndex + 1) : onClose()
-              }
-            >
+            <button className="btn-primary tour-next" onClick={goNext}>
               {stepIndex + 1 < STEPS.length ? "Next" : "Finish"}
             </button>
           )}

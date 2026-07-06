@@ -102,13 +102,11 @@ export default function App() {
     setTutorialStep(null);
   }
 
+  // Throws on failure so Hero can show the error — App's own error state is
+  // only rendered inside the side panel, which doesn't exist yet on the hero.
   async function startTutorial() {
-    try {
-      onUploaded(await uploadDataset(await demoWorkbookFile()));
-      setTutorialStep(0);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not start the tutorial.");
-    }
+    onUploaded(await uploadDataset(await demoWorkbookFile()));
+    setTutorialStep(0);
   }
 
   function invalidateResults() {
@@ -283,7 +281,7 @@ export default function App() {
         onReset={reset}
       />
       {!dataset || !spec || !table ? (
-        <Hero onUploaded={onUploaded} onStartTutorial={() => void startTutorial()} />
+        <Hero onUploaded={onUploaded} onStartTutorial={startTutorial} />
       ) : (
         <main className="studio">
           <section className="studio-main" aria-label="Data">
@@ -370,6 +368,7 @@ export default function App() {
             rowsToPredict,
             busy,
             hasResult: result !== null,
+            hasError: error !== null,
           }}
           stepIndex={tutorialStep}
           onStepChange={setTutorialStep}

@@ -1521,6 +1521,11 @@
   color: var(--ink-2);
 }
 
+.tour-body strong {
+  font-weight: 650;
+  color: var(--ink);
+}
+
 .tour-actions {
   display: flex;
   align-items: center;
@@ -1543,6 +1548,21 @@
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--series-1);
+}
+
+.tour-wait-error {
+  color: var(--error-ink);
+}
+
+.tour-wait-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.tour-skip {
+  color: var(--ink-muted);
+  flex-shrink: 0;
 }
 
 .spinner-blue {

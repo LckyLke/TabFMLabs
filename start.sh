@@ -27,7 +27,13 @@ cd "$ROOT/backend"
 if [ ! -d .venv ]; then
   echo "==> Creating backend virtualenv"
   python -m venv .venv
+fi
+# Re-sync whenever pyproject.toml changed so dependency additions reach
+# existing installs, not just fresh ones.
+if [ pyproject.toml -nt .venv/.deps-synced ]; then
+  echo "==> Installing backend dependencies"
   .venv/bin/pip install -e ".[dev]"
+  touch .venv/.deps-synced
 fi
 
 echo "==> Starting backend on :$BACKEND_PORT"

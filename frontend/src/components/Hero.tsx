@@ -6,7 +6,7 @@ import { demoCsvFile, demoWorkbookFile } from "../demoFiles";
 
 interface Props {
   onUploaded: (dataset: DatasetResponse) => void;
-  onStartTutorial: () => void;
+  onStartTutorial: () => Promise<void>;
 }
 
 function relativeTime(iso: string): string {
@@ -87,6 +87,18 @@ export function Hero({ onUploaded, onStartTutorial }: Props) {
     }
   }
 
+  async function startTutorial() {
+    setBusy(true);
+    setError(null);
+    try {
+      await onStartTutorial();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not start the tutorial.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function onDrop(e: DragEvent) {
     e.preventDefault();
     setDragging(false);
@@ -159,7 +171,7 @@ export function Hero({ onUploaded, onStartTutorial }: Props) {
         <div className="dashboard-head">
           <h1 className="dashboard-title">Your projects</h1>
           <div className="dashboard-actions">
-            <button className="btn-ghost" disabled={busy} onClick={onStartTutorial}>
+            <button className="btn-ghost" disabled={busy} onClick={() => void startTutorial()}>
               Interactive tutorial
             </button>
             {demoButtons}
@@ -241,7 +253,7 @@ export function Hero({ onUploaded, onStartTutorial }: Props) {
           </>
         )}
       </div>
-      <button className="btn-primary hero-tutorial" disabled={busy} onClick={onStartTutorial}>
+      <button className="btn-primary hero-tutorial" disabled={busy} onClick={() => void startTutorial()}>
         <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
           <path d="M4.5 3.2a1 1 0 0 1 1.52-.86l7 4.3a1 1 0 0 1 0 1.7l-7 4.3a1 1 0 0 1-1.52-.85V3.2Z" />
         </svg>
