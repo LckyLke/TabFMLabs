@@ -1,3 +1,4 @@
+
 # TabFM Studio
 
 Point-and-click predictions on your spreadsheets, powered by
@@ -5,6 +6,10 @@ Point-and-click predictions on your spreadsheets, powered by
 model. Drop in a CSV or Excel file, mark what to predict, and the empty cells
 fill in right on the grid — no code, no training step, and nothing ever leaves
 your machine.
+
+
+https://github.com/user-attachments/assets/37d3c6eb-15d5-4739-983d-62e99d25d1b9
+
 
 ## Quick start
 
