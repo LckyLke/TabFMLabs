@@ -1,7 +1,9 @@
 """FastAPI app: upload a table, mark it on the grid, predict empty target cells."""
 
 import io
+import json
 import logging
+import os
 import threading
 import uuid
 from contextlib import asynccontextmanager
@@ -33,13 +35,19 @@ from .inference import (
 )
 from .schemas import (
     ConfusionMatrix,
+    CvCheckResponse,
     DatasetResponse,
     DistributionBin,
     ExplainRequest,
     ExplainResponse,
+    ExplainRowRequest,
+    ExplainRowResponse,
     FeatureImportance,
     GridPage,
     HoldoutSample,
+    ImputedColumn,
+    ImputeRequest,
+    ImputeResponse,
     JobStatus,
     Metrics,
     ModelInfo,
@@ -48,6 +56,7 @@ from .schemas import (
     PredictResponse,
     ProjectInfo,
     RolesRequest,
+    RowContribution,
     SheetRequest,
     TableProfile,
     TableSpec,
@@ -58,7 +67,9 @@ logger = logging.getLogger(__name__)
 
 MIN_CONTEXT_ROWS = 5
 MIN_ROWS_FOR_HOLDOUT = 20
+MIN_RELIABLE_HOLDOUT = 10
 HOLDOUT_FRACTION = 0.2
+CV_FOLDS = 5
 MAX_RESULT_ROWS_INLINE = 500
 MAX_HOLDOUT_SAMPLES = 200
 
@@ -74,7 +85,11 @@ app = FastAPI(title="TabFM Studio API", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        *[o for o in os.environ.get("EXTRA_CORS_ORIGINS", "").split(",") if o],
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -114,6 +129,12 @@ def _dataset_response(dataset_id: str, ds: datasets.Dataset) -> DatasetResponse:
 @app.post("/api/datasets", response_model=DatasetResponse)
 async def upload_dataset(file: UploadFile) -> DatasetResponse:
     content = await file.read()
+    max_bytes = int(os.environ.get("MAX_UPLOAD_BYTES", "0"))
+    if max_bytes and len(content) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"This demo instance accepts files up to {max_bytes:,} bytes.",
+        )
     filename = file.filename or "upload.csv"
     try:
         raws = datasets.parse_upload(filename, content)
@@ -467,6 +488,152 @@ def cancel_predict_job(job_id: str) -> JobStatus:
 
 
 # --------------------------------------------------------------------------
+# Impute (fill every empty cell, one pass per incomplete column)
+# --------------------------------------------------------------------------
+
+
+@app.post("/api/impute", response_model=ImputeResponse)
+def impute(req: ImputeRequest) -> ImputeResponse:
+    try:
+        ds = datasets.get_dataset(req.dataset_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Dataset not found. Re-upload the file.")
+    df = ds.sheet.df
+
+    try:
+        model_id = resolve_model(req.model)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if req.ensemble and not MODELS[model_id]["supports_ensemble"]:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{MODELS[model_id]['label']} does not support ensemble mode.",
+        )
+    backend = get_backend(model_id)
+
+    roles = ds.sheet.roles or ["feature"] * len(df.columns)
+    usable = [c for c, role in zip(df.columns, roles) if role != "ignore"]
+    incomplete = [c for c in usable if df[c].isna().any()]
+    if not incomplete:
+        raise HTTPException(
+            status_code=422, detail="No empty cells to fill in the marked columns."
+        )
+
+    warnings: list[str] = []
+    result_df = df.copy()
+    filled: list[ImputedColumn] = []
+    model_name = getattr(backend, "name", "model")
+
+    for col in incomplete:
+        labeled = df[col].notna()
+        if int(labeled.sum()) < MIN_CONTEXT_ROWS:
+            warnings.append(f"“{col}”: fewer than {MIN_CONTEXT_ROWS} filled rows — skipped.")
+            continue
+        y = df[col][labeled]
+        task = infer_task(y)
+        if task == "classification" and y.nunique() > MAX_CLASSES:
+            warnings.append(f"“{col}”: more than {MAX_CLASSES} classes — skipped.")
+            continue
+        features = [c for c in usable if c != col]
+        X_context, y_context = _subsample(
+            df.loc[labeled, features], y, req.max_context_rows, warnings
+        )
+        try:
+            result = backend.fit_predict(
+                X_context, y_context, df.loc[~labeled, features], task, ensemble=req.ensemble
+            )
+        except WeightsUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except Exception:
+            logger.exception("Imputing %s failed", col)
+            warnings.append(f"“{col}”: the model failed — skipped.")
+            continue
+        predictions = result.predictions
+        if task == "regression":
+            predictions = np.asarray([float(f"{float(v):.6g}") for v in predictions])
+        result_df.loc[~labeled, col] = predictions
+        filled.append(ImputedColumn(column=col, task=task, n_filled=int((~labeled).sum())))
+        model_name = result.model_name
+
+    if not filled:
+        raise HTTPException(
+            status_code=422,
+            detail="No column could be filled. " + " ".join(warnings),
+        )
+
+    prediction_id = uuid.uuid4().hex[:12]
+    response = ImputeResponse(
+        prediction_id=prediction_id,
+        model_name=model_name,
+        columns=filled,
+        n_cells_filled=sum(c.n_filled for c in filled),
+        warnings=warnings,
+    )
+    csv_buf = io.StringIO()
+    result_df.to_csv(csv_buf, index=False)
+    # "predictions": [] keeps the xlsx download route harmless for impute results.
+    stored = {**response.model_dump(), "predictions": []}
+    store.save_result(
+        prediction_id,
+        req.dataset_id,
+        ds.active,
+        filled[0].column,
+        json.dumps(stored),
+        csv_buf.getvalue().encode(),
+    )
+    return response
+
+
+# --------------------------------------------------------------------------
+# Thorough check (k-fold cross-validation)
+# --------------------------------------------------------------------------
+
+
+@app.post("/api/cv-check", response_model=CvCheckResponse)
+def cv_check(req: PredictRequest) -> CvCheckResponse:
+    _, _, _, X, y, _, task, backend = _prepare(req)
+    warnings: list[str] = []
+    X, y = _subsample(X, y, req.max_context_rows, warnings)
+    if len(X) < MIN_ROWS_FOR_HOLDOUT:
+        raise HTTPException(
+            status_code=422,
+            detail=f"The thorough check needs at least {MIN_ROWS_FOR_HOLDOUT} labeled rows.",
+        )
+
+    from sklearn.model_selection import KFold, StratifiedKFold
+
+    stratified = task == "classification" and y.value_counts().min() >= CV_FOLDS
+    if stratified:
+        splitter = StratifiedKFold(n_splits=CV_FOLDS, shuffle=True, random_state=42)
+    else:
+        splitter = KFold(n_splits=CV_FOLDS, shuffle=True, random_state=42)
+
+    scores: list[float] = []
+    try:
+        for train_idx, val_idx in splitter.split(X, y if stratified else None):
+            X_tr, y_tr = X.iloc[train_idx], y.iloc[train_idx]
+            X_va, y_va = X.iloc[val_idx], y.iloc[val_idx]
+            result = backend.fit_predict(X_tr, y_tr, X_va, task, ensemble=req.ensemble)
+            if task == "classification":
+                scores.append(float(accuracy_score(y_va, result.predictions)))
+            else:
+                scores.append(float(r2_score(y_va, result.predictions)))
+    except WeightsUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return CvCheckResponse(
+        task=task,
+        model_name=getattr(backend, "name", "model"),
+        metric_name="accuracy" if task == "classification" else "R²",
+        n_folds=CV_FOLDS,
+        n_labeled=len(X),
+        scores=[round(s, 4) for s in scores],
+        mean=round(float(np.mean(scores)), 4),
+        std=round(float(np.std(scores)), 4),
+    )
+
+
+# --------------------------------------------------------------------------
 # Explain (permutation importance)
 # --------------------------------------------------------------------------
 
@@ -527,6 +694,87 @@ def explain(req: ExplainRequest) -> ExplainResponse:
         baseline_score=round(baseline, 4),
         n_holdout=len(y_val),
         importances=importances,
+    )
+
+
+# --------------------------------------------------------------------------
+# Explain a single row ("why this prediction?")
+# --------------------------------------------------------------------------
+
+
+def _fmt_pred(v) -> str:
+    return f"{v:g}" if isinstance(v, (float, np.floating)) else str(v)
+
+
+@app.post("/api/explain-row", response_model=ExplainRowResponse)
+def explain_row(req: ExplainRowRequest) -> ExplainRowResponse:
+    predict_req = PredictRequest(
+        dataset_id=req.dataset_id,
+        target_column=req.target_column,
+        feature_columns=req.feature_columns,
+        model=req.model,
+        task=req.task,
+        ensemble=req.ensemble,
+    )
+    _, _, _, X, y, X_predict, task, backend = _prepare(predict_req)
+    if req.row_index not in X_predict.index:
+        raise HTTPException(
+            status_code=422, detail="That row is not one of the rows being predicted."
+        )
+    if len(req.feature_columns) > 15:
+        raise HTTPException(
+            status_code=422,
+            detail="Explaining is limited to 15 input columns (one ablation per column).",
+        )
+
+    # One batch: the row as-is, then one variant per feature with that value
+    # swapped for a "typical" one (median for numbers, most common otherwise).
+    row = X_predict.loc[[req.row_index]]
+    typicals: dict[str, object] = {}
+    variants = [row]
+    for feature in req.feature_columns:
+        col = X[feature].dropna()
+        if pd.api.types.is_numeric_dtype(col):
+            typical = col.median()
+        else:
+            typical = col.mode().iloc[0] if len(col) else None
+        typicals[feature] = typical
+        variant = row.copy()
+        variant[feature] = typical
+        variants.append(variant)
+
+    try:
+        result = backend.fit_predict(
+            X, y, pd.concat(variants, ignore_index=True), task, ensemble=req.ensemble
+        )
+    except WeightsUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    base = result.predictions[0]
+    contributions = []
+    for i, feature in enumerate(req.feature_columns):
+        swapped = result.predictions[i + 1]
+        if task == "regression":
+            impact = abs(float(swapped) - float(base))
+        else:
+            impact = 0.0 if str(swapped) == str(base) else 1.0
+        actual = row[feature].iloc[0]
+        contributions.append(
+            RowContribution(
+                feature=feature,
+                value=None if pd.isna(actual) else str(actual),
+                typical=_fmt_pred(typicals[feature]) if typicals[feature] is not None else "—",
+                prediction=_fmt_pred(swapped),
+                impact=round(impact, 4),
+            )
+        )
+    contributions.sort(key=lambda c: c.impact, reverse=True)
+    return ExplainRowResponse(
+        row_index=req.row_index,
+        task=task,
+        model_name=getattr(backend, "name", "model"),
+        prediction=_fmt_pred(base),
+        contributions=contributions,
     )
 
 
@@ -618,6 +866,14 @@ def _excel_value(val: str):
 # --------------------------------------------------------------------------
 
 
+def _label_sort_key(label: str) -> tuple:
+    """Numeric class labels order by value ("2" before "10"), text ones alphabetically."""
+    try:
+        return (0, float(label), label)
+    except ValueError:
+        return (1, 0.0, label)
+
+
 def _holdout_metrics(
     backend, X, y, task, warnings: list[str], ensemble: bool = False
 ) -> Metrics | None:
@@ -631,6 +887,11 @@ def _holdout_metrics(
     X_train, X_val, y_train, y_val = train_test_split(
         X, y, test_size=HOLDOUT_FRACTION, random_state=42, stratify=stratify
     )
+    if len(y_val) < MIN_RELIABLE_HOLDOUT:
+        warnings.append(
+            f"Only {len(y_val)} rows could be held out for the accuracy check, "
+            "so its numbers are a rough signal, not a precise score."
+        )
     try:
         result = backend.fit_predict(X_train, y_train, X_val, task, ensemble=ensemble)
     except WeightsUnavailable:
@@ -640,10 +901,10 @@ def _holdout_metrics(
         warnings.append("The accuracy check failed; predictions are still produced.")
         return None
     if task == "classification":
-        labels = sorted(str(v) for v in pd.unique(y_val))
-        matrix = confusion_matrix(
-            y_val.astype(str), pd.Series(result.predictions).astype(str), labels=labels
-        )
+        actual = y_val.astype(str)
+        predicted = pd.Series(result.predictions).astype(str)
+        labels = sorted(set(actual) | set(predicted), key=_label_sort_key)
+        matrix = confusion_matrix(actual, predicted, labels=labels)
         return Metrics(
             task=task,
             n_holdout=len(y_val),
@@ -705,3 +966,15 @@ def _distribution(predictions: np.ndarray, task) -> list[DistributionBin]:
         DistributionBin(label=f"{fmt(iv.left)} – {fmt(iv.right)}", count=int(n))
         for iv, n in binned.value_counts().sort_index().items()
     ]
+
+
+# --------------------------------------------------------------------------
+# Static frontend (Docker / single-container deployments)
+# --------------------------------------------------------------------------
+
+_frontend_dist = os.environ.get("FRONTEND_DIST")
+if _frontend_dist and os.path.isdir(_frontend_dist):
+    from fastapi.staticfiles import StaticFiles
+
+    # Mounted last so all /api routes above keep precedence.
+    app.mount("/", StaticFiles(directory=_frontend_dist, html=True), name="frontend")

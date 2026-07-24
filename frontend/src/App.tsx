@@ -235,7 +235,7 @@ export default function App() {
   }
 
   async function runCompare() {
-    const contenders = models.filter((m) => m.id !== "baseline");
+    const contenders = models; // foundation models + the classic-ML baseline reference
     setBusyStage("comparing…");
     setError(null);
     setCompare(null);

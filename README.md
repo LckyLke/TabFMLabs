@@ -1,6 +1,9 @@
 
 # TabFM Studio
 
+[![CI](https://github.com/LckyLke/TabFMLabs/actions/workflows/ci.yml/badge.svg)](https://github.com/LckyLke/TabFMLabs/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Point-and-click predictions on your spreadsheets, powered by
 [Google's TabFM](https://github.com/google-research/tabfm) tabular foundation
 model. Drop in a CSV or Excel file, mark what to predict, and the empty cells
@@ -29,6 +32,20 @@ or drop in your own file (`sample_data/` has extras).
 MODEL_BACKEND=baseline ./start.sh   # sklearn baseline — for dev, no weight download
 ```
 
+### Docker
+
+No Python/Node needed — one container serves the app on
+http://localhost:8000:
+
+```bash
+docker compose up
+```
+
+Projects and downloaded weights persist in named volumes (`studio-data`,
+`weights-cache`). Environment passthrough: `MODEL_BACKEND=baseline` to skip
+weight downloads, `TABPFN_TOKEN=<key>` for TabPFN, `MODEL_DEVICE=cpu` to
+force CPU.
+
 ## How it works
 
 1. **Drop in** a file — multi-sheet workbooks get sheet tabs.
@@ -38,10 +55,14 @@ MODEL_BACKEND=baseline ./start.sh   # sklearn baseline — for dev, no weight do
    are the in-context examples.
 3. **Predict** — pick TabFM or TabPFN, optionally force categories vs number.
    Predictions run as cancellable background jobs with live progress;
-   hover a filled cell for confidence.
+   hover a filled cell for confidence. Or **Fill every empty cell** to impute
+   all incomplete columns in one go (one model pass per column).
 4. **Judge & export** — holdout accuracy check (confusion matrix or scatter),
+   an optional **thorough check** (5-fold cross-validation, mean ± spread),
    prediction distribution, "what drives these predictions?" feature
-   importance, and a **Compare models** run on the same holdout. Export Excel
+   importance, per-row **"why this prediction?"** explanations, and a
+   **Compare models** run on the same holdout — including a classic-ML
+   gradient-boosting reference. Export Excel
    (your original workbook with predicted cells filled, highlighted and
    annotated) or CSV.
 
@@ -56,7 +77,7 @@ creating a duplicate.
 |---|---|
 | **TabFM** (default) | Google's foundation model. Two ~6.6 GB checkpoints (classification / regression), fetched from Hugging Face on first prediction. CUDA when available; `MODEL_DEVICE=cpu` forces CPU. |
 | **TabPFN** | Prior Labs' foundation model — small weights, fast. One-time free license: accept at https://ux.priorlabs.ai, then start the backend with `TABPFN_TOKEN=<key>`. (Its usage telemetry is disabled.) |
-| **Baseline (sklearn)** | HistGradientBoosting — dev/tests only. |
+| **Gradient boosting (classic ML)** | scikit-learn HistGradientBoosting trained on your example rows. The reference the foundation models should beat — included in **Compare models** by default. |
 
 No silent substitution: an unavailable model fails with a clear 503.
 
@@ -88,5 +109,13 @@ parsing/profiling, holdout metrics); `frontend/` is React + TypeScript (Vite).
 `npm run dev`). Tests:
 
 ```bash
-cd backend && .venv/bin/python -m pytest
+cd backend && .venv/bin/python -m pytest   # API tests (fast, baseline model)
+cd frontend && npm run e2e                 # Playwright smoke test (real app)
 ```
+
+## License
+
+This project is [MIT licensed](LICENSE). Note that the model weights it
+downloads have their own licenses: the TabFM weights are **non-commercial**
+(see [Models](#models)), and TabPFN requires a free license key from Prior
+Labs.

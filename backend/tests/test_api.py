@@ -5,6 +5,7 @@ import os
 import tempfile
 import time
 
+import numpy as np
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
@@ -419,6 +420,78 @@ def test_confusion_matrix_in_metrics(iris_like):
     assert sum(sum(r) for r in confusion["matrix"]) == resp.json()["metrics"]["n_holdout"]
 
 
+def test_upload_size_cap(iris_like, monkeypatch):
+    """MAX_UPLOAD_BYTES (demo deployments) rejects oversized files with 413."""
+    monkeypatch.setenv("MAX_UPLOAD_BYTES", "100")
+    resp = client.post(
+        "/api/datasets", files={"file": ("data.csv", make_csv(iris_like), "text/csv")}
+    )
+    assert resp.status_code == 413
+    assert "demo" in resp.json()["detail"].lower()
+
+
+def test_small_holdout_flagged_as_rough(iris_like):
+    """A tiny validation slice is warned about; a decent one is not."""
+    df = pd.DataFrame(
+        {
+            "x": [float(i) for i in range(24)] + [1.0, 2.0],
+            "kind": ["small" if i % 2 == 0 else "big" for i in range(24)] + [None, None],
+        }
+    )
+    ds = upload(df)["dataset_id"]
+    resp = client.post(
+        "/api/predict",
+        json={"dataset_id": ds, "target_column": "kind", "feature_columns": ["x"], "model": "baseline"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["metrics"]["n_holdout"] < 10
+    assert any("held out" in w for w in body["warnings"]), body["warnings"]
+
+    # 60 labeled rows -> 12 held-out rows -> no warning
+    ds = upload(iris_like)["dataset_id"]
+    resp = client.post(
+        "/api/predict",
+        json={"dataset_id": ds, "target_column": "kind", "feature_columns": ["length"], "model": "baseline"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert not any("held out" in w for w in resp.json()["warnings"])
+
+
+def test_confusion_includes_predicted_only_labels():
+    """Predictions of a class absent from the holdout slice must not vanish."""
+    from app.inference import FitPredictResult
+    from app.main import _holdout_metrics
+
+    class StrayLabelBackend:
+        def fit_predict(self, X_train, y_train, X_val, task, ensemble=False):
+            return FitPredictResult(np.array(["stray"] * len(X_val)), None, "fake")
+
+    X = pd.DataFrame({"x": range(60)})
+    y = pd.Series(["a" if i % 2 == 0 else "b" for i in range(60)])
+    m = _holdout_metrics(StrayLabelBackend(), X, y, "classification", warnings=[])
+    assert "stray" in m.confusion.labels
+    assert sum(sum(r) for r in m.confusion.matrix) == m.n_holdout
+
+
+def test_confusion_labels_sort_numerically():
+    """Numeric class labels order as 1, 2, 10 — not 1, 10, 2."""
+    from app.inference import FitPredictResult
+    from app.main import _holdout_metrics
+
+    class EchoBackend:
+        def __init__(self, y):
+            self.y = y
+
+        def fit_predict(self, X_train, y_train, X_val, task, ensemble=False):
+            return FitPredictResult(self.y.loc[X_val.index].to_numpy(), None, "fake")
+
+    X = pd.DataFrame({"x": range(60)})
+    y = pd.Series([str([1, 2, 10][i % 3]) for i in range(60)])
+    m = _holdout_metrics(EchoBackend(y), X, y, "classification", warnings=[])
+    assert m.confusion.labels == ["1", "2", "10"]
+
+
 def test_regression_holdout_samples():
     df = pd.DataFrame(
         {
@@ -475,6 +548,129 @@ def test_explain(iris_like):
     # length separates the classes perfectly; shuffling it must hurt
     by_name = {fi["feature"]: fi["importance"] for fi in body["importances"]}
     assert by_name["length"] > 0
+
+
+def test_impute_fills_all_incomplete_columns():
+    """One pass per incomplete column; complete columns are untouched."""
+    n = 40
+    df = pd.DataFrame(
+        {
+            "a": [float(i) for i in range(n)],
+            "b": [float(2 * i) for i in range(n)],
+            "c": ["x" if i % 2 == 0 else "y" for i in range(n)],
+        }
+    )
+    df.loc[3:6, "b"] = None  # 4 missing numbers
+    df.loc[10:12, "c"] = None  # 3 missing categories
+    ds = upload(df)["dataset_id"]
+
+    resp = client.post("/api/impute", json={"dataset_id": ds, "model": "baseline"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert {c["column"] for c in body["columns"]} == {"b", "c"}
+    by_col = {c["column"]: c for c in body["columns"]}
+    assert by_col["b"]["task"] == "regression"
+    assert by_col["b"]["n_filled"] == 4
+    assert by_col["c"]["task"] == "classification"
+    assert by_col["c"]["n_filled"] == 3
+    assert body["n_cells_filled"] == 7
+
+    csv_resp = client.get(f"/api/results/{body['prediction_id']}/csv")
+    assert csv_resp.status_code == 200
+    out = pd.read_csv(io.BytesIO(csv_resp.content))
+    assert out["b"].notna().all()
+    assert out["c"].notna().all()
+    assert set(out["c"]) <= {"x", "y"}
+
+
+def test_impute_nothing_to_fill(iris_like):
+    complete = iris_like.dropna()
+    ds = upload(complete)["dataset_id"]
+    resp = client.post("/api/impute", json={"dataset_id": ds, "model": "baseline"})
+    assert resp.status_code == 422
+    assert "empty" in resp.json()["detail"].lower()
+
+
+def test_impute_skips_ignored_columns(iris_like):
+    ds = upload(iris_like)["dataset_id"]
+    client.put(f"/api/datasets/{ds}/roles", json={"roles": ["feature", "feature", "ignore"]})
+    resp = client.post("/api/impute", json={"dataset_id": ds, "model": "baseline"})
+    # "kind" (the only incomplete column) is ignored -> nothing to fill
+    assert resp.status_code == 422
+
+
+def test_cv_check(iris_like):
+    """5-fold cross-validation returns per-fold scores and mean ± std."""
+    ds = upload(iris_like)["dataset_id"]
+    resp = client.post(
+        "/api/cv-check",
+        json={
+            "dataset_id": ds,
+            "target_column": "kind",
+            "feature_columns": ["length", "width"],
+            "model": "baseline",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["task"] == "classification"
+    assert body["metric_name"] == "accuracy"
+    assert body["n_folds"] == 5
+    assert len(body["scores"]) == 5
+    assert 0.0 <= body["mean"] <= 1.0
+    assert body["std"] >= 0.0
+    assert body["n_labeled"] == 60
+
+
+def test_cv_check_needs_enough_rows():
+    df = pd.DataFrame({"x": range(15), "y": ["a", "b"] * 7 + [None]})
+    ds = upload(df)["dataset_id"]
+    resp = client.post(
+        "/api/cv-check",
+        json={"dataset_id": ds, "target_column": "y", "feature_columns": ["x"], "model": "baseline"},
+    )
+    assert resp.status_code == 422
+
+
+def test_explain_row(iris_like):
+    """Per-row attribution: re-predict with each feature swapped for a typical value."""
+    ds = upload(iris_like)["dataset_id"]
+    resp = client.post(
+        "/api/explain-row",
+        json={
+            "dataset_id": ds,
+            "target_column": "kind",
+            "feature_columns": ["length", "width"],
+            "model": "baseline",
+            "row_index": 61,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["row_index"] == 61
+    assert body["prediction"] in ("small", "big")
+    assert {c["feature"] for c in body["contributions"]} == {"length", "width"}
+    impacts = [c["impact"] for c in body["contributions"]]
+    assert impacts == sorted(impacts, reverse=True)
+    for c in body["contributions"]:
+        assert c["typical"] != ""
+        assert c["prediction"] in ("small", "big")
+        assert c["impact"] >= 0.0
+
+
+def test_explain_row_rejects_labeled_row(iris_like):
+    ds = upload(iris_like)["dataset_id"]
+    resp = client.post(
+        "/api/explain-row",
+        json={
+            "dataset_id": ds,
+            "target_column": "kind",
+            "feature_columns": ["length", "width"],
+            "model": "baseline",
+            "row_index": 1,
+        },
+    )
+    assert resp.status_code == 422
 
 
 def test_xlsx_download(iris_like):

@@ -312,8 +312,9 @@ MODELS = {
         "supports_ensemble": False,
     },
     "baseline": {
-        "label": "Baseline (sklearn)",
-        "description": "HistGradientBoosting — no foundation model, for tests/dev",
+        "label": "Gradient boosting (classic ML)",
+        "description": "scikit-learn HistGradientBoosting trained on your example rows — "
+        "the classic-ML reference the foundation models should beat",
         "cls": BaselineBackend,
         "supports_ensemble": False,
     },

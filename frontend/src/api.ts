@@ -120,6 +120,47 @@ export interface ExplainResponse {
   importances: FeatureImportance[];
 }
 
+export interface RowContribution {
+  feature: string;
+  value: string | null;
+  typical: string;
+  prediction: string;
+  impact: number;
+}
+
+export interface ExplainRowResponse {
+  row_index: number;
+  task: TaskType;
+  model_name: string;
+  prediction: string;
+  contributions: RowContribution[];
+}
+
+export interface ImputedColumn {
+  column: string;
+  task: TaskType;
+  n_filled: number;
+}
+
+export interface ImputeResponse {
+  prediction_id: string;
+  model_name: string;
+  columns: ImputedColumn[];
+  n_cells_filled: number;
+  warnings: string[];
+}
+
+export interface CvCheckResponse {
+  task: TaskType;
+  model_name: string;
+  metric_name: string;
+  n_folds: number;
+  n_labeled: number;
+  scores: number[];
+  mean: number;
+  std: number;
+}
+
 export interface ProjectInfo {
   dataset_id: string;
   filename: string;
@@ -282,6 +323,71 @@ export async function explain(
   return handleResponse(
     await fetch(
       `${API_BASE}/api/explain`,
+      jsonInit("POST", {
+        dataset_id: datasetId,
+        target_column: targetColumn,
+        feature_columns: featureColumns,
+        model: model ?? null,
+        task: task ?? null,
+        ensemble: ensemble ?? false,
+      }),
+    ),
+  );
+}
+
+export async function explainRow(
+  datasetId: string,
+  targetColumn: string,
+  featureColumns: string[],
+  rowIndex: number,
+  model?: string,
+  task?: TaskType | null,
+  ensemble?: boolean,
+): Promise<ExplainRowResponse> {
+  return handleResponse(
+    await fetch(
+      `${API_BASE}/api/explain-row`,
+      jsonInit("POST", {
+        dataset_id: datasetId,
+        target_column: targetColumn,
+        feature_columns: featureColumns,
+        row_index: rowIndex,
+        model: model ?? null,
+        task: task ?? null,
+        ensemble: ensemble ?? false,
+      }),
+    ),
+  );
+}
+
+export async function impute(
+  datasetId: string,
+  model?: string,
+  ensemble?: boolean,
+): Promise<ImputeResponse> {
+  return handleResponse(
+    await fetch(
+      `${API_BASE}/api/impute`,
+      jsonInit("POST", {
+        dataset_id: datasetId,
+        model: model ?? null,
+        ensemble: ensemble ?? false,
+      }),
+    ),
+  );
+}
+
+export async function cvCheck(
+  datasetId: string,
+  targetColumn: string,
+  featureColumns: string[],
+  model?: string,
+  task?: TaskType | null,
+  ensemble?: boolean,
+): Promise<CvCheckResponse> {
+  return handleResponse(
+    await fetch(
+      `${API_BASE}/api/cv-check`,
       jsonInit("POST", {
         dataset_id: datasetId,
         target_column: targetColumn,

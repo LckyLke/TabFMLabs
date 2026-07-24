@@ -99,6 +99,38 @@ class Metrics(BaseModel):
     holdout_samples: list[HoldoutSample] | None = None
 
 
+class ImputeRequest(BaseModel):
+    dataset_id: str
+    model: str | None = None
+    ensemble: bool = False
+    max_context_rows: int | None = None
+
+
+class ImputedColumn(BaseModel):
+    column: str
+    task: TaskType
+    n_filled: int
+
+
+class ImputeResponse(BaseModel):
+    prediction_id: str
+    model_name: str
+    columns: list[ImputedColumn]
+    n_cells_filled: int
+    warnings: list[str]
+
+
+class CvCheckResponse(BaseModel):
+    task: TaskType
+    model_name: str
+    metric_name: str  # "accuracy" or "R²"
+    n_folds: int
+    n_labeled: int
+    scores: list[float]  # primary metric per fold
+    mean: float
+    std: float
+
+
 class PredictionRow(BaseModel):
     row_index: int
     values: dict[str, str | None]
@@ -144,6 +176,32 @@ class ExplainRequest(BaseModel):
 class FeatureImportance(BaseModel):
     feature: str
     importance: float
+
+
+class ExplainRowRequest(BaseModel):
+    dataset_id: str
+    target_column: str
+    feature_columns: list[str]
+    row_index: int  # raw-grid row index of a row being predicted
+    model: str | None = None
+    task: TaskType | None = None
+    ensemble: bool = False
+
+
+class RowContribution(BaseModel):
+    feature: str
+    value: str | None  # the row's actual value
+    typical: str  # the stand-in (median / most common) used instead
+    prediction: str  # what the model would say with the stand-in
+    impact: float  # |Δ prediction| for regression; 1.0 = class flip
+
+
+class ExplainRowResponse(BaseModel):
+    row_index: int
+    task: TaskType
+    model_name: str
+    prediction: str
+    contributions: list[RowContribution]  # sorted, biggest impact first
 
 
 class ExplainResponse(BaseModel):

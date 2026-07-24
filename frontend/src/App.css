@@ -468,9 +468,91 @@
   gap: 0.05rem;
 }
 
+.tile[data-tip] {
+  position: relative;
+  cursor: help;
+}
+
+.tile[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  background: var(--ink);
+  color: var(--page);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  z-index: 3;
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.tile[data-tip]:hover::after,
+.tile[data-tip]:focus-visible::after {
+  visibility: visible;
+  opacity: 1;
+}
+
 .tile-label {
   color: var(--ink-muted);
   font-size: 0.72rem;
+}
+
+.tile-info {
+  margin-left: 0.3rem;
+  color: var(--ink-muted);
+  opacity: 0.7;
+  cursor: help;
+}
+
+.impute {
+  margin-top: 0.6rem;
+}
+
+.impute-result p {
+  font-size: 0.82rem;
+  margin: 0.4rem 0;
+}
+
+.cv-check {
+  margin: 0.4rem 0 1rem;
+}
+
+.row-explain {
+  margin-top: 0.9rem;
+}
+
+.row-explain-controls {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.row-explain-controls select {
+  flex: 1;
+  min-width: 0;
+}
+
+.row-explain-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+}
+
+.row-explain-list li {
+  font-size: 0.8rem;
+  color: var(--ink-muted);
+  padding: 0.3rem 0;
+  border-top: 1px solid var(--hairline-strong);
+}
+
+.row-explain-list li.is-impactful {
+  color: var(--ink);
 }
 
 .tile-value {

@@ -1,0 +1,16 @@
+services:
+  studio:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - studio-data:/data # projects + results (SQLite)
+      - weights-cache:/root/.cache # downloaded model weights
+    environment:
+      MODEL_BACKEND: ${MODEL_BACKEND:-} # e.g. "baseline" to skip weight downloads
+      TABPFN_TOKEN: ${TABPFN_TOKEN:-} # enables the TabPFN model
+      MODEL_DEVICE: ${MODEL_DEVICE:-} # e.g. "cpu" to force CPU
+
+volumes:
+  studio-data:
+  weights-cache:

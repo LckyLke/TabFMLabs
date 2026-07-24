@@ -2,13 +2,17 @@ import { useState } from "react";
 import type { CompareEntry } from "../App";
 import type {
   ColumnInfo,
+  CvCheckResponse,
   ExplainResponse,
+  ExplainRowResponse,
+  ImputeResponse,
   Metrics,
   ModelInfo,
+  PredictionRow,
   PredictResponse,
   TaskType,
 } from "../api";
-import { explain, resultCsvUrl, resultXlsxUrl } from "../api";
+import { cvCheck, explain, explainRow, impute, resultCsvUrl, resultXlsxUrl } from "../api";
 import { DistributionChart } from "./DistributionChart";
 
 interface Props {
@@ -54,28 +58,48 @@ function StepCheck({ done, num }: { done: boolean; num: number }) {
   );
 }
 
+const METRIC_TIPS = {
+  accuracy: "Share of held-out rows predicted correctly. Higher is better; 100% is perfect.",
+  f1: "Precision and recall averaged with every class counting equally, from 0 to 1 (higher is better). Much lower than accuracy means the model struggles with a rare class.",
+  r2: "How much of the target's variation the model explains. 1.0 is perfect, 0.0 is no better than always guessing the average, and negative is worse than that.",
+  mae: "How far off predictions are on average, in the same units as the target column. Lower is better.",
+};
+
 function MetricTiles({ m }: { m: Metrics | null }) {
-  const tiles: { label: string; value: string; sub?: string }[] = [];
+  const tiles: { label: string; value: string; sub?: string; tip: string }[] = [];
   if (m?.accuracy != null)
     tiles.push({
       label: "Accuracy check",
       value: `${(m.accuracy * 100).toFixed(1)}%`,
       sub: `on ${m.n_holdout} held-out rows`,
+      tip: METRIC_TIPS.accuracy,
     });
-  if (m?.f1_macro != null) tiles.push({ label: "F1 (macro)", value: m.f1_macro.toFixed(3) });
+  if (m?.f1_macro != null)
+    tiles.push({ label: "F1 (macro)", value: m.f1_macro.toFixed(3), tip: METRIC_TIPS.f1 });
   if (m?.r2 != null)
-    tiles.push({ label: "R² check", value: m.r2.toFixed(3), sub: `on ${m.n_holdout} held-out rows` });
+    tiles.push({
+      label: "R² check",
+      value: m.r2.toFixed(3),
+      sub: `on ${m.n_holdout} held-out rows`,
+      tip: METRIC_TIPS.r2,
+    });
   if (m?.mae != null)
     tiles.push({
       label: "Typical error",
       value: m.mae.toLocaleString(undefined, { maximumFractionDigits: 1 }),
+      tip: METRIC_TIPS.mae,
     });
   if (tiles.length === 0) return null;
   return (
     <div className="rail-tiles">
       {tiles.map((t) => (
-        <div key={t.label} className="tile">
-          <span className="tile-label">{t.label}</span>
+        <div key={t.label} className="tile" tabIndex={0} data-tip={t.tip}>
+          <span className="tile-label">
+            {t.label}
+            <span className="tile-info" aria-hidden="true">
+              ⓘ
+            </span>
+          </span>
           <span className="tile-value">{t.value}</span>
           {t.sub && <span className="tile-sub">{t.sub}</span>}
         </div>
@@ -151,15 +175,21 @@ function HoldoutScatter({ m }: { m: Metrics }) {
 }
 
 function CompareCard({ compare }: { compare: CompareEntry[] }) {
-  const metricRows: { label: string; get: (m: Metrics | null) => string }[] = [
+  const metricRows: { label: string; tip: string; get: (m: Metrics | null) => string }[] = [
     {
       label: "Accuracy",
+      tip: METRIC_TIPS.accuracy,
       get: (m) => (m?.accuracy != null ? `${(m.accuracy * 100).toFixed(1)}%` : "—"),
     },
-    { label: "F1 (macro)", get: (m) => (m?.f1_macro != null ? m.f1_macro.toFixed(3) : "—") },
-    { label: "R²", get: (m) => (m?.r2 != null ? m.r2.toFixed(3) : "—") },
+    {
+      label: "F1 (macro)",
+      tip: METRIC_TIPS.f1,
+      get: (m) => (m?.f1_macro != null ? m.f1_macro.toFixed(3) : "—"),
+    },
+    { label: "R²", tip: METRIC_TIPS.r2, get: (m) => (m?.r2 != null ? m.r2.toFixed(3) : "—") },
     {
       label: "Typical error",
+      tip: METRIC_TIPS.mae,
       get: (m) =>
         m?.mae != null ? m.mae.toLocaleString(undefined, { maximumFractionDigits: 1 }) : "—",
     },
@@ -183,7 +213,7 @@ function CompareCard({ compare }: { compare: CompareEntry[] }) {
         <tbody>
           {shown.map((row) => (
             <tr key={row.label}>
-              <th>{row.label}</th>
+              <th title={row.tip}>{row.label}</th>
               {compare.map((e) => (
                 <td key={e.model.id}>{row.get(e.result?.metrics ?? null)}</td>
               ))}
@@ -199,7 +229,243 @@ function CompareCard({ compare }: { compare: CompareEntry[] }) {
             {e.model.label}: {e.error}
           </div>
         ))}
-      <p className="rail-note">Same holdout split for every model — higher is better.</p>
+      <p className="rail-note">
+        Same holdout split for every model — higher is better, except Typical error (lower is
+        better).
+      </p>
+    </div>
+  );
+}
+
+function ImputeSection({
+  datasetId,
+  modelId,
+  ensemble,
+}: {
+  datasetId: string;
+  modelId: string;
+  ensemble: boolean;
+}) {
+  const [data, setData] = useState<ImputeResponse | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run() {
+    setBusy(true);
+    setError(null);
+    setData(null);
+    try {
+      setData(await impute(datasetId, modelId, ensemble));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Filling failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="impute">
+      <button
+        className="btn-ghost"
+        disabled={busy}
+        onClick={() => void run()}
+        title="One prediction pass per incomplete column — each column's filled cells teach the model"
+      >
+        {busy ? (
+          <>
+            <span className="spinner spinner-blue" aria-hidden="true" /> filling empty cells…
+          </>
+        ) : (
+          "Fill every empty cell (all columns)"
+        )}
+      </button>
+      {error && <div className="alert alert-warn">{error}</div>}
+      {data && (
+        <div className="impute-result" role="status">
+          <p>
+            Filled {data.n_cells_filled.toLocaleString()}{" "}
+            cell{data.n_cells_filled === 1 ? "" : "s"} across {data.columns.length}{" "}
+            column{data.columns.length === 1 ? "" : "s"}:{" "}
+            {data.columns.map((c) => c.column).join(", ")}.
+          </p>
+          {data.warnings.map((w) => (
+            <div key={w} className="alert alert-warn">
+              {w}
+            </div>
+          ))}
+          <a className="btn-ghost download-csv" href={resultCsvUrl(data.prediction_id)} download>
+            download the completed table (CSV)
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CvCheckSection({
+  datasetId,
+  targetName,
+  featureNames,
+  modelId,
+  taskOverride,
+  ensemble,
+}: {
+  datasetId: string;
+  targetName: string;
+  featureNames: string[];
+  modelId: string;
+  taskOverride: TaskType | null;
+  ensemble: boolean;
+}) {
+  const [data, setData] = useState<CvCheckResponse | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run() {
+    setBusy(true);
+    setError(null);
+    try {
+      setData(await cvCheck(datasetId, targetName, featureNames, modelId, taskOverride, ensemble));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "The thorough check failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!data) {
+    return (
+      <div className="cv-check">
+        <button className="btn-secondary" disabled={busy} onClick={() => void run()}>
+          {busy ? (
+            <>
+              <span className="spinner spinner-blue" aria-hidden="true" /> cross-validating…
+            </>
+          ) : (
+            "Run a more thorough check"
+          )}
+        </button>
+        {!busy && !error && (
+          <p className="rail-note">
+            5-fold cross-validation — every labeled row takes a turn being held out.
+          </p>
+        )}
+        {error && <div className="alert alert-warn">{error}</div>}
+      </div>
+    );
+  }
+
+  const isAccuracy = data.metric_name === "accuracy";
+  const fmt = (v: number) => (isAccuracy ? `${(v * 100).toFixed(1)}%` : v.toFixed(3));
+  return (
+    <div className="rail-tiles">
+      <div
+        className="tile"
+        tabIndex={0}
+        data-tip={`Mean ± standard deviation of the ${data.metric_name} over ${data.n_folds} train/validate splits that together cover every labeled row. More reliable than the single holdout check, especially on small tables.`}
+      >
+        <span className="tile-label">
+          Thorough check
+          <span className="tile-info" aria-hidden="true">
+            ⓘ
+          </span>
+        </span>
+        <span className="tile-value">
+          {fmt(data.mean)} ± {fmt(data.std)}
+        </span>
+        <span className="tile-sub">
+          {data.metric_name} across {data.n_folds} folds · {data.n_labeled.toLocaleString()} labeled
+          rows
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function RowExplainSection({
+  datasetId,
+  targetName,
+  featureNames,
+  modelId,
+  taskOverride,
+  ensemble,
+  predictions,
+}: {
+  datasetId: string;
+  targetName: string;
+  featureNames: string[];
+  modelId: string;
+  taskOverride: TaskType | null;
+  ensemble: boolean;
+  predictions: PredictionRow[];
+}) {
+  const [rowIndex, setRowIndex] = useState<number>(predictions[0]?.row_index ?? 0);
+  const [data, setData] = useState<ExplainRowResponse | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (predictions.length === 0) return null;
+
+  async function run() {
+    setBusy(true);
+    setError(null);
+    try {
+      setData(
+        await explainRow(
+          datasetId,
+          targetName,
+          featureNames,
+          rowIndex,
+          modelId,
+          taskOverride,
+          ensemble,
+        ),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Explaining the row failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="row-explain">
+      <div className="row-explain-controls">
+        <select
+          value={rowIndex}
+          aria-label="Predicted row to explain"
+          onChange={(e) => {
+            setRowIndex(Number(e.target.value));
+            setData(null);
+          }}
+        >
+          {predictions.slice(0, 100).map((p) => (
+            <option key={p.row_index} value={p.row_index}>
+              Row {p.row_index + 1} → {p.prediction}
+            </option>
+          ))}
+        </select>
+        <button className="btn-secondary" disabled={busy} onClick={() => void run()}>
+          {busy ? (
+            <>
+              <span className="spinner spinner-blue" aria-hidden="true" /> checking…
+            </>
+          ) : (
+            "Why this prediction?"
+          )}
+        </button>
+      </div>
+      {error && <div className="alert alert-warn">{error}</div>}
+      {data && (
+        <ul className="row-explain-list">
+          {data.contributions.map((c) => (
+            <li key={c.feature} className={c.impact > 0 ? "is-impactful" : ""}>
+              <strong>{c.feature}</strong> = {c.value ?? "—"} — with a typical value ({c.typical})
+              the model would say <strong>{c.prediction}</strong>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -313,7 +579,7 @@ export function SidePanel({
   const rowsMarked = targetChosen && rowsToPredict > 0;
   const busy = busyStage !== null;
   const selectedModel = models.find((m) => m.id === modelId);
-  const canCompare = models.filter((m) => m.id !== "baseline").length >= 2;
+  const canCompare = models.length >= 2;
 
   return (
     <aside className="rail">
@@ -480,13 +746,18 @@ export function SidePanel({
                 className="btn-secondary compare-btn"
                 disabled={problem !== null}
                 onClick={onCompare}
-                title="Run every foundation model on the same data and compare their accuracy checks"
+                title="Run every model — foundation models and the classic-ML baseline — on the same data and compare their accuracy checks"
               >
                 Compare models
               </button>
             )}
           </div>
         )}
+        <ImputeSection
+          datasetId={datasetId}
+          modelId={modelId}
+          ensemble={ensemble && (selectedModel?.supports_ensemble ?? false)}
+        />
       </div>
 
       {compare && <CompareCard compare={compare} />}
@@ -504,10 +775,8 @@ export function SidePanel({
           <MetricTiles m={result.metrics} />
           {result.metrics && <ConfusionTable m={result.metrics} />}
           {result.metrics && <HoldoutScatter m={result.metrics} />}
-          <DistributionChart bins={result.distribution} task={result.task} />
-
-          {targetName && (
-            <ExplainSection
+          {result.metrics && targetName && (
+            <CvCheckSection
               datasetId={datasetId}
               targetName={targetName}
               featureNames={featureNames}
@@ -515,6 +784,29 @@ export function SidePanel({
               taskOverride={taskOverride}
               ensemble={ensemble && (selectedModel?.supports_ensemble ?? false)}
             />
+          )}
+          <DistributionChart bins={result.distribution} task={result.task} />
+
+          {targetName && (
+            <>
+              <ExplainSection
+                datasetId={datasetId}
+                targetName={targetName}
+                featureNames={featureNames}
+                modelId={modelId}
+                taskOverride={taskOverride}
+                ensemble={ensemble && (selectedModel?.supports_ensemble ?? false)}
+              />
+              <RowExplainSection
+                datasetId={datasetId}
+                targetName={targetName}
+                featureNames={featureNames}
+                modelId={modelId}
+                taskOverride={taskOverride}
+                ensemble={ensemble && (selectedModel?.supports_ensemble ?? false)}
+                predictions={result.predictions}
+              />
+            </>
           )}
 
           {result.warnings.map((w) => (
