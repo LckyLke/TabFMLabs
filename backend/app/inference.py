@@ -70,12 +70,20 @@ class BaselineBackend:
     name = "baseline (HistGradientBoosting)"
 
     def fit_predict(
-        self, X_train: pd.DataFrame, y_train: pd.Series, X_test: pd.DataFrame, task: TaskType
+        self,
+        X_train: pd.DataFrame,
+        y_train: pd.Series,
+        X_test: pd.DataFrame,
+        task: TaskType,
+        ensemble: bool = False,
     ) -> FitPredictResult:
         from sklearn.ensemble import (
             HistGradientBoostingClassifier,
             HistGradientBoostingRegressor,
         )
+
+        if ensemble:
+            raise ValueError(f"{self.name} does not support ensemble mode.")
 
         X_train = _encode_for_sklearn(X_train)
         X_test = _encode_for_sklearn(X_test)
@@ -192,20 +200,32 @@ class TabFMBackend:
             return self._models[model_type]
 
     def fit_predict(
-        self, X_train: pd.DataFrame, y_train: pd.Series, X_test: pd.DataFrame, task: TaskType
+        self,
+        X_train: pd.DataFrame,
+        y_train: pd.Series,
+        X_test: pd.DataFrame,
+        task: TaskType,
+        ensemble: bool = False,
     ) -> FitPredictResult:
         from tabfm import TabFMClassifier, TabFMRegressor
 
         model = self._load(task)
+        # The .ensemble() preset is the paper's "TabFM-Ensemble" configuration:
+        # feature crosses + SVD features, NNLS-weighted blending, calibration.
+        # Both presets run 32 data views; ensemble adds out-of-fold weight
+        # fitting, so it is several times slower per prediction.
+        name = f"{self.name} · ensemble" if ensemble else self.name
         if task == "classification":
-            clf = TabFMClassifier(model=model)
+            make = TabFMClassifier.ensemble if ensemble else TabFMClassifier
+            clf = make(model=model)
             clf.fit(X_train, y_train)
             proba = clf.predict_proba(X_test)
             preds = np.asarray(clf.classes_)[np.argmax(proba, axis=1)]
-            return FitPredictResult(preds, proba.max(axis=1), self.name)
-        reg = TabFMRegressor(model=model)
+            return FitPredictResult(preds, proba.max(axis=1), name)
+        make = TabFMRegressor.ensemble if ensemble else TabFMRegressor
+        reg = make(model=model)
         reg.fit(X_train, y_train)
-        return FitPredictResult(np.asarray(reg.predict(X_test)), None, self.name)
+        return FitPredictResult(np.asarray(reg.predict(X_test)), None, name)
 
 
 # --------------------------------------------------------------------------
@@ -223,8 +243,15 @@ class TabPFNBackend:
         self._lock = threading.Lock()
 
     def fit_predict(
-        self, X_train: pd.DataFrame, y_train: pd.Series, X_test: pd.DataFrame, task: TaskType
+        self,
+        X_train: pd.DataFrame,
+        y_train: pd.Series,
+        X_test: pd.DataFrame,
+        task: TaskType,
+        ensemble: bool = False,
     ) -> FitPredictResult:
+        if ensemble:
+            raise ValueError(f"{self.name} does not support ensemble mode.")
         # Local-first app: never phone home usage data.
         os.environ.setdefault("TABPFN_DISABLE_TELEMETRY", "1")
         try:
@@ -276,16 +303,19 @@ MODELS = {
         "label": "TabFM",
         "description": "Google's tabular foundation model (6.6 GB per task, GPU-friendly)",
         "cls": TabFMBackend,
+        "supports_ensemble": True,
     },
     "tabpfn": {
         "label": "TabPFN",
         "description": "Prior Labs' tabular foundation model (small weights, fast)",
         "cls": TabPFNBackend,
+        "supports_ensemble": False,
     },
     "baseline": {
         "label": "Baseline (sklearn)",
         "description": "HistGradientBoosting — no foundation model, for tests/dev",
         "cls": BaselineBackend,
+        "supports_ensemble": False,
     },
 }
 
@@ -295,10 +325,15 @@ _instances: dict[str, object] = {}
 _instances_lock = threading.Lock()
 
 
-def get_backend(model: str | None = None):
+def resolve_model(model: str | None = None) -> str:
     name = model or os.environ.get("MODEL_BACKEND") or DEFAULT_MODEL
     if name not in MODELS:
         raise ValueError(f"Unknown model “{name}”. Available: {', '.join(MODELS)}")
+    return name
+
+
+def get_backend(model: str | None = None):
+    name = resolve_model(model)
     with _instances_lock:
         if name not in _instances:
             _instances[name] = MODELS[name]["cls"]()

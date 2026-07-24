@@ -49,6 +49,7 @@ export interface ModelInfo {
   label: string;
   description: string;
   is_default: boolean;
+  supports_ensemble: boolean;
 }
 
 export interface ConfusionMatrix {
@@ -133,6 +134,7 @@ export interface PredictOptions {
   model?: string;
   maxContextRows?: number | null;
   task?: TaskType | null;
+  ensemble?: boolean;
 }
 
 async function handleResponse<T>(resp: Response): Promise<T> {
@@ -243,6 +245,7 @@ function predictBody(
     model: opts.model ?? null,
     max_context_rows: opts.maxContextRows ?? null,
     task: opts.task ?? null,
+    ensemble: opts.ensemble ?? false,
   };
 }
 
@@ -274,6 +277,7 @@ export async function explain(
   featureColumns: string[],
   model?: string,
   task?: TaskType | null,
+  ensemble?: boolean,
 ): Promise<ExplainResponse> {
   return handleResponse(
     await fetch(
@@ -284,6 +288,7 @@ export async function explain(
         feature_columns: featureColumns,
         model: model ?? null,
         task: task ?? null,
+        ensemble: ensemble ?? false,
       }),
     ),
   );

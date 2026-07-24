@@ -367,6 +367,10 @@ def test_models_endpoint_and_unknown_model(iris_like):
     assert resp.status_code == 200
     ids = [m["id"] for m in resp.json()]
     assert {"tabfm", "tabpfn", "baseline"} <= set(ids)
+    by_id = {m["id"]: m for m in resp.json()}
+    assert by_id["tabfm"]["supports_ensemble"] is True
+    assert by_id["tabpfn"]["supports_ensemble"] is False
+    assert by_id["baseline"]["supports_ensemble"] is False
 
     ds = upload(iris_like)["dataset_id"]
     resp = client.post(
@@ -380,6 +384,22 @@ def test_models_endpoint_and_unknown_model(iris_like):
     )
     assert resp.status_code == 422
     assert "Unknown model" in resp.json()["detail"]
+
+
+def test_ensemble_rejected_for_unsupported_model(iris_like):
+    ds = upload(iris_like)["dataset_id"]
+    resp = client.post(
+        "/api/predict",
+        json={
+            "dataset_id": ds,
+            "target_column": "kind",
+            "feature_columns": ["length", "width"],
+            "model": "baseline",
+            "ensemble": True,
+        },
+    )
+    assert resp.status_code == 422
+    assert "ensemble" in resp.json()["detail"].lower()
 
 
 def test_confusion_matrix_in_metrics(iris_like):

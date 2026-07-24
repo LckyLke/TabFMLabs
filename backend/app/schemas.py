@@ -63,6 +63,7 @@ class ModelInfo(BaseModel):
     label: str
     description: str
     is_default: bool
+    supports_ensemble: bool
 
 
 class PredictRequest(BaseModel):
@@ -72,6 +73,7 @@ class PredictRequest(BaseModel):
     model: str | None = None  # registry id; None = server default
     max_context_rows: int | None = None  # subsample examples for huge tables
     task: TaskType | None = None  # manual override; None = auto-detect
+    ensemble: bool = False  # TabFM-Ensemble preset; only for models that support it
 
 
 class ConfusionMatrix(BaseModel):
@@ -136,6 +138,7 @@ class ExplainRequest(BaseModel):
     feature_columns: list[str]
     model: str | None = None
     task: TaskType | None = None
+    ensemble: bool = False
 
 
 class FeatureImportance(BaseModel):

@@ -26,6 +26,8 @@ interface Props {
   models: ModelInfo[];
   modelId: string;
   onModelChange: (id: string) => void;
+  ensemble: boolean;
+  onEnsembleChange: (on: boolean) => void;
   maxContextRows: number | null;
   onMaxContextRows: (n: number | null) => void;
   taskOverride: TaskType | null;
@@ -208,12 +210,14 @@ function ExplainSection({
   featureNames,
   modelId,
   taskOverride,
+  ensemble,
 }: {
   datasetId: string;
   targetName: string;
   featureNames: string[];
   modelId: string;
   taskOverride: TaskType | null;
+  ensemble: boolean;
 }) {
   const [data, setData] = useState<ExplainResponse | null>(null);
   const [busy, setBusy] = useState(false);
@@ -223,7 +227,7 @@ function ExplainSection({
     setBusy(true);
     setError(null);
     try {
-      setData(await explain(datasetId, targetName, featureNames, modelId, taskOverride));
+      setData(await explain(datasetId, targetName, featureNames, modelId, taskOverride, ensemble));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Explaining failed.");
     } finally {
@@ -292,6 +296,8 @@ export function SidePanel({
   models,
   modelId,
   onModelChange,
+  ensemble,
+  onEnsembleChange,
   maxContextRows,
   onMaxContextRows,
   taskOverride,
@@ -378,6 +384,21 @@ export function SidePanel({
           </select>
           {selectedModel && <span className="model-select-desc">{selectedModel.description}</span>}
         </label>
+
+        {selectedModel?.supports_ensemble && (
+          <label className="subsample ensemble-toggle">
+            <input
+              type="checkbox"
+              checked={ensemble}
+              onChange={(e) => onEnsembleChange(e.target.checked)}
+              disabled={busy}
+            />
+            <span>
+              <strong>Ensemble mode</strong> — weighted 32-view blend with calibration; more
+              accurate, several times slower
+            </span>
+          </label>
+        )}
 
         <div className="task-select" role="radiogroup" aria-label="Prediction type">
           <span className="model-select-label">Predict as</span>
@@ -492,6 +513,7 @@ export function SidePanel({
               featureNames={featureNames}
               modelId={modelId}
               taskOverride={taskOverride}
+              ensemble={ensemble && (selectedModel?.supports_ensemble ?? false)}
             />
           )}
 

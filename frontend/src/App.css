@@ -1085,6 +1085,11 @@
   margin: 0 0 0.9rem;
 }
 
+/* tucks under the model picker it configures */
+.ensemble-toggle {
+  margin-top: -0.45rem;
+}
+
 .subsample-n {
   width: 4.5rem;
   font: inherit;

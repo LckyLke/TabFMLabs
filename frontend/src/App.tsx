@@ -48,6 +48,7 @@ export default function App() {
   const [roles, setRoles] = useState<ColumnRole[]>([]);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelId, setModelId] = useState<string>("tabfm");
+  const [ensemble, setEnsemble] = useState(false);
   const [maxContextRows, setMaxContextRows] = useState<number | null>(null);
   const [taskOverride, setTaskOverride] = useState<TaskType | null>(null);
   const [result, setResult] = useState<PredictResponse | null>(null);
@@ -199,10 +200,12 @@ export default function App() {
 
   async function runJob(model: string, onStage: (s: string) => void): Promise<PredictResponse> {
     if (!dataset || !target) throw new Error("Nothing to predict.");
+    const supportsEnsemble = models.find((m) => m.id === model)?.supports_ensemble ?? false;
     const job = await startPredictJob(dataset.dataset_id, target.name, featureNames, {
       model,
       maxContextRows,
       task: taskOverride,
+      ensemble: ensemble && supportsEnsemble,
     });
     activeJob.current = job.job_id;
     for (;;) {
@@ -340,6 +343,11 @@ export default function App() {
             modelId={modelId}
             onModelChange={(id) => {
               setModelId(id);
+              invalidateResults();
+            }}
+            ensemble={ensemble}
+            onEnsembleChange={(on) => {
+              setEnsemble(on);
               invalidateResults();
             }}
             maxContextRows={maxContextRows}

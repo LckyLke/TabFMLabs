@@ -29,6 +29,7 @@ from .inference import (
     WeightsUnavailable,
     get_backend,
     infer_task,
+    resolve_model,
 )
 from .schemas import (
     ConfusionMatrix,
@@ -218,6 +219,7 @@ def list_models() -> list[ModelInfo]:
             label=info["label"],
             description=info["description"],
             is_default=model_id == DEFAULT_MODEL,
+            supports_ensemble=info["supports_ensemble"],
         )
         for model_id, info in MODELS.items()
     ]
@@ -282,9 +284,15 @@ def _prepare(req: PredictRequest):
         )
 
     try:
-        backend = get_backend(req.model)
+        model_id = resolve_model(req.model)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if req.ensemble and not MODELS[model_id]["supports_ensemble"]:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{MODELS[model_id]['label']} does not support ensemble mode.",
+        )
+    backend = get_backend(model_id)
 
     return ds, df, labeled_mask, X_context, y_context, X_predict, task, backend
 
@@ -306,9 +314,11 @@ def _run_predict(req: PredictRequest, progress=lambda stage: None) -> PredictRes
 
     try:
         progress("accuracy check")
-        metrics = _holdout_metrics(backend, X_context, y_context, task, warnings)
+        metrics = _holdout_metrics(
+            backend, X_context, y_context, task, warnings, ensemble=req.ensemble
+        )
         progress(f"predicting {len(X_predict)} rows")
-        result = backend.fit_predict(X_context, y_context, X_predict, task)
+        result = backend.fit_predict(X_context, y_context, X_predict, task, ensemble=req.ensemble)
     except WeightsUnavailable as exc:
         raise HTTPException(
             status_code=503,
@@ -469,6 +479,7 @@ def explain(req: ExplainRequest) -> ExplainResponse:
         feature_columns=req.feature_columns,
         model=req.model,
         task=req.task,
+        ensemble=req.ensemble,
     )
     _, _, _, X, y, _, task, backend = _prepare(predict_req)
     if len(X) < MIN_ROWS_FOR_HOLDOUT:
@@ -488,7 +499,7 @@ def explain(req: ExplainRequest) -> ExplainResponse:
     )
 
     def score(X_v) -> float:
-        result = backend.fit_predict(X_train, y_train, X_v, task)
+        result = backend.fit_predict(X_train, y_train, X_v, task, ensemble=req.ensemble)
         if task == "classification":
             return float(accuracy_score(y_val, result.predictions))
         return float(r2_score(y_val, result.predictions))
@@ -607,7 +618,9 @@ def _excel_value(val: str):
 # --------------------------------------------------------------------------
 
 
-def _holdout_metrics(backend, X, y, task, warnings: list[str]) -> Metrics | None:
+def _holdout_metrics(
+    backend, X, y, task, warnings: list[str], ensemble: bool = False
+) -> Metrics | None:
     """Evaluate on a held-out slice of the labeled rows so users can judge quality."""
     if len(X) < MIN_ROWS_FOR_HOLDOUT:
         warnings.append(
@@ -619,7 +632,7 @@ def _holdout_metrics(backend, X, y, task, warnings: list[str]) -> Metrics | None
         X, y, test_size=HOLDOUT_FRACTION, random_state=42, stratify=stratify
     )
     try:
-        result = backend.fit_predict(X_train, y_train, X_val, task)
+        result = backend.fit_predict(X_train, y_train, X_val, task, ensemble=ensemble)
     except WeightsUnavailable:
         raise
     except Exception:
